@@ -1,0 +1,40 @@
+name: Publish CodisAI Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful native build run ID
+        required: true
+        type: string
+        default: "37117135763"
+  push:
+    paths:
+      - ".github/workflows/publish-build.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Publish downloadable addon release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download packaged addon
+        uses: actions/download-artifact@v4
+        with:
+          name: codisai-cross-platform-addon
+          path: release-files
+          run-id: ${{ inputs.run_id || '37117135763' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.run_id || '37117135763' }}
+        run: |
+          gh release create "native-build-${SOURCE_RUN_ID}" \
+            release-files/codisai.zip \
+            --title "CodisAI Native Build ${SOURCE_RUN_ID}" \
+            --notes "Successful cross-platform CodisAI addon build from GitHub Actions run ${SOURCE_RUN_ID}. Includes the GDExtension manifest and compiled platform libraries."
