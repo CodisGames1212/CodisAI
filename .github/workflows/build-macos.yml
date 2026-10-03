@@ -1,0 +1,111 @@
+name: Build CodisAI macOS GDExtension
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-macos.yml"
+      - "CMakeLists.txt"
+      - "addons/codisai/native/**"
+      - "addons/codisai/bin/macos/**"
+  pull_request:
+    paths:
+      - ".github/workflows/build-macos.yml"
+      - "CMakeLists.txt"
+      - "addons/codisai/native/**"
+      - "addons/codisai/bin/macos/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codisai-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }} ${{ matrix.build_type }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            build_type: Debug
+            suffix: debug
+            library: addons/codisai/bin/macos/libcodisai.macos.template_debug.x86_64.dylib
+          - arch: x86_64
+            build_type: Release
+            suffix: release
+            library: addons/codisai/bin/macos/libcodisai.macos.template_release.x86_64.dylib
+          - arch: arm64
+            build_type: Debug
+            suffix: debug
+            library: addons/codisai/bin/macos/libcodisai.macos.template_debug.arm64.dylib
+          - arch: arm64
+            build_type: Release
+            suffix: release
+            library: addons/codisai/bin/macos/libcodisai.macos.template_release.arm64.dylib
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Configure
+        run: >-
+          cmake -S addons/codisai/native
+          -B build/macos-${{ matrix.arch }}-${{ matrix.suffix }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+
+      - name: Build
+        run: >-
+          cmake --build build/macos-${{ matrix.arch }}-${{ matrix.suffix }}
+          --config ${{ matrix.build_type }}
+          --parallel 3
+
+      - name: Upload library
+        uses: actions/upload-artifact@v4
+        with:
+          name: codisai-macos-${{ matrix.arch }}-${{ matrix.suffix }}
+          path: ${{ matrix.library }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Package macOS libraries
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: codisai-macos-*
+          merge-multiple: false
+
+      - name: Assemble addon archive
+        shell: bash
+        run: |
+          staging="package/addons/codisai"
+          mkdir -p "$staging/bin/macos"
+          cp -R addons/codisai/. "$staging/"
+          find artifacts -type f -name '*.dylib' -exec cp {} "$staging/bin/macos/" \;
+          cp README.md LICENSE "$staging/"
+          cd package
+          zip -qr codisai-macos.zip addons
+
+      - name: Upload macOS addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: codisai-macos-addon
+          path: package/codisai-macos.zip
+          if-no-files-found: error
+          retention-days: 14

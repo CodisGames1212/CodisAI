@@ -1,0 +1,32 @@
+[configuration]
+
+entry_symbol = "codisai_library_init"
+compatibility_minimum = "4.4"
+reloadable = false
+
+[libraries]
+
+; Editor rows use optimized libraries; debug/release export rows match their templates.
+windows.debug.x86_64 = "res://addons/codisai/bin/windows/codisai.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/codisai/bin/windows/codisai.windows.template_release.x86_64.dll"
+windows.editor.x86_64 = "res://addons/codisai/bin/windows/codisai.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_release.x86_64.so"
+linux.editor.x86_64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_release.x86_64.so"
+linux.debug.arm64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_debug.arm64.so"
+linux.release.arm64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_release.arm64.so"
+linux.editor.arm64 = "res://addons/codisai/bin/linux/libcodisai.linux.template_release.arm64.so"
+macos.debug.x86_64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_debug.x86_64.dylib"
+macos.release.x86_64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_release.x86_64.dylib"
+macos.editor.x86_64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_release.x86_64.dylib"
+macos.debug.arm64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_debug.arm64.dylib"
+macos.release.arm64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_release.arm64.dylib"
+macos.editor.arm64 = "res://addons/codisai/bin/macos/libcodisai.macos.template_release.arm64.dylib"
+android.debug.arm64 = "res://addons/codisai/bin/android/libcodisai.android.template_debug.arm64.so"
+android.release.arm64 = "res://addons/codisai/bin/android/libcodisai.android.template_release.arm64.so"
+android.debug.arm32 = "res://addons/codisai/bin/android/libcodisai.android.template_debug.arm32.so"
+android.release.arm32 = "res://addons/codisai/bin/android/libcodisai.android.template_release.arm32.so"
+android.debug.x86_64 = "res://addons/codisai/bin/android/libcodisai.android.template_debug.x86_64.so"
+android.release.x86_64 = "res://addons/codisai/bin/android/libcodisai.android.template_release.x86_64.so"
+android.debug.x86_32 = "res://addons/codisai/bin/android/libcodisai.android.template_debug.x86_32.so"
+android.release.x86_32 = "res://addons/codisai/bin/android/libcodisai.android.template_release.x86_32.so"

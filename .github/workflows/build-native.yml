@@ -1,0 +1,243 @@
+name: Build CodisAI GDExtension
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-native.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "addons/codisai/native/**"
+      - "addons/codisai/bin/**"
+      - "addons/codisai/runtime/**"
+      - "addons/codisai/demo/**"
+  pull_request:
+    paths:
+      - ".github/workflows/build-native.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "addons/codisai/native/**"
+      - "addons/codisai/bin/**"
+      - "addons/codisai/runtime/**"
+      - "addons/codisai/demo/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codisai-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.build_type }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            build_type: Debug
+            library: addons/codisai/bin/linux/libcodisai.linux.template_debug.x86_64.so
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            build_type: Release
+            library: addons/codisai/bin/linux/libcodisai.linux.template_release.x86_64.so
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            build_type: Debug
+            library: addons/codisai/bin/linux/libcodisai.linux.template_debug.arm64.so
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            build_type: Release
+            library: addons/codisai/bin/linux/libcodisai.linux.template_release.arm64.so
+          - platform: windows
+            arch: x86_64
+            runner: windows-2022
+            build_type: Debug
+            library: addons/codisai/bin/windows/codisai.windows.template_debug.x86_64.dll
+          - platform: windows
+            arch: x86_64
+            runner: windows-2022
+            build_type: Release
+            library: addons/codisai/bin/windows/codisai.windows.template_release.x86_64.dll
+          - platform: macos
+            arch: x86_64
+            runner: macos-14
+            build_type: Debug
+            library: addons/codisai/bin/macos/libcodisai.macos.template_debug.x86_64.dylib
+          - platform: macos
+            arch: x86_64
+            runner: macos-14
+            build_type: Release
+            library: addons/codisai/bin/macos/libcodisai.macos.template_release.x86_64.dylib
+          - platform: macos
+            arch: arm64
+            runner: macos-14
+            build_type: Debug
+            library: addons/codisai/bin/macos/libcodisai.macos.template_debug.arm64.dylib
+          - platform: macos
+            arch: arm64
+            runner: macos-14
+            build_type: Release
+            library: addons/codisai/bin/macos/libcodisai.macos.template_release.arm64.dylib
+          - platform: android
+            arch: arm64
+            abi: arm64-v8a
+            runner: ubuntu-24.04
+            build_type: Debug
+            library: addons/codisai/bin/android/libcodisai.android.template_debug.arm64.so
+          - platform: android
+            arch: arm64
+            abi: arm64-v8a
+            runner: ubuntu-24.04
+            build_type: Release
+            library: addons/codisai/bin/android/libcodisai.android.template_release.arm64.so
+          - platform: android
+            arch: arm32
+            abi: armeabi-v7a
+            runner: ubuntu-24.04
+            build_type: Debug
+            library: addons/codisai/bin/android/libcodisai.android.template_debug.arm32.so
+          - platform: android
+            arch: arm32
+            abi: armeabi-v7a
+            runner: ubuntu-24.04
+            build_type: Release
+            library: addons/codisai/bin/android/libcodisai.android.template_release.arm32.so
+          - platform: android
+            arch: x86_64
+            abi: x86_64
+            runner: ubuntu-24.04
+            build_type: Debug
+            library: addons/codisai/bin/android/libcodisai.android.template_debug.x86_64.so
+          - platform: android
+            arch: x86_64
+            abi: x86_64
+            runner: ubuntu-24.04
+            build_type: Release
+            library: addons/codisai/bin/android/libcodisai.android.template_release.x86_64.so
+          - platform: android
+            arch: x86_32
+            abi: x86
+            runner: ubuntu-24.04
+            build_type: Debug
+            library: addons/codisai/bin/android/libcodisai.android.template_debug.x86_32.so
+          - platform: android
+            arch: x86_32
+            abi: x86
+            runner: ubuntu-24.04
+            build_type: Release
+            library: addons/codisai/bin/android/libcodisai.android.template_release.x86_32.so
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Set up Android SDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Set up MSVC
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure desktop build
+        if: matrix.platform != 'android'
+        shell: bash
+        run: |
+          args=(-S addons/codisai/native -B "build/${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.build_type }}")
+          args+=(-DCMAKE_BUILD_TYPE=${{ matrix.build_type }})
+          if [[ "${{ matrix.platform }}" == "windows" ]]; then
+            args+=(-G "Visual Studio 17 2022" -A x64)
+          elif [[ "${{ matrix.platform }}" == "macos" ]]; then
+            args+=(-DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }})
+          fi
+          cmake "${args[@]}"
+
+      - name: Install Android NDK
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          sdkmanager --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Configure Android build
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          cmake -S addons/codisai/native -B "build/android-${{ matrix.abi }}-${{ matrix.build_type }}" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_static
+
+      - name: Build
+        shell: bash
+        run: cmake --build "build/${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.build_type }}" --config "${{ matrix.build_type }}" --parallel 2
+        if: matrix.platform != 'android'
+
+      - name: Build Android
+        if: matrix.platform == 'android'
+        shell: bash
+        run: cmake --build "build/android-${{ matrix.abi }}-${{ matrix.build_type }}" --config "${{ matrix.build_type }}" --parallel 2
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: codisai-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.build_type }}
+          path: ${{ matrix.library }}
+          if-no-files-found: error
+          retention-days: 3
+
+  package:
+    name: Assemble plugin package
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download platform libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: codisai-*
+          merge-multiple: false
+
+      - name: Assemble and archive addon
+        shell: bash
+        run: |
+          staging="package/addons/codisai"
+          mkdir -p "$staging"
+          cp -R addons/codisai/. "$staging/"
+          while IFS= read -r -d '' library; do
+            filename=$(basename "$library")
+            platform=${filename#*codisai.}
+            platform=${platform%%.*}
+            mkdir -p "$staging/bin/$platform"
+            cp "$library" "$staging/bin/$platform/"
+          done < <(find artifacts -type f \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) -print0)
+          cp README.md LICENSE "$staging/"
+          cd package
+          zip -qr codisai.zip addons
+
+      - name: Upload packaged addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: codisai-cross-platform-addon
+          path: package/codisai.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,6 @@
+.godot/
+/build/
+addons/codisai/bin/
+addons/codisai/native/build/
+addons/codisai/native/build-*/
+addons/codisai/native/cmake-build-*/
