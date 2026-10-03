@@ -32,9 +32,11 @@ jobs:
       - name: Publish release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ inputs.run_id || '37117135763' }}
         run: |
           gh release create "native-build-${SOURCE_RUN_ID}" \
             release-files/codisai.zip \
+            --repo "$GITHUB_REPOSITORY" \
             --title "CodisAI Native Build ${SOURCE_RUN_ID}" \
             --notes "Successful cross-platform CodisAI addon build from GitHub Actions run ${SOURCE_RUN_ID}. Includes the GDExtension manifest and compiled platform libraries."
