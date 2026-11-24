@@ -1,0 +1,162 @@
+name: Build CodisAI App
+
+# Exports the chat demo for Windows, Linux (arm64) and Android using the
+# platform libraries produced by the "Build CodisAI GDExtension" workflow.
+# Run that workflow at least once so the cross-platform addon artifact exists.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/build-game.yml"
+      - "export_presets.cfg"
+      - "project.godot"
+      - "addons/codisai/**"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codisai-app-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.1"
+
+jobs:
+  export:
+    name: Export ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Windows Desktop
+            runner: windows-2022
+            output: build/windows/CodisAI.exe
+            bundle: build/windows
+            artifact: codisai-windows-x86_64
+          - target: Linux
+            runner: ubuntu-24.04-arm
+            output: build/linux/CodisAI.arm64
+            bundle: build/linux
+            artifact: codisai-linux-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Download native addon package
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-native.yml
+          workflow_conclusion: success
+          name: codisai-cross-platform-addon
+          path: addon-package
+          search_artifacts: true
+
+      - name: Install native libraries
+        shell: bash
+        run: |
+          python -c "import zipfile; zipfile.ZipFile('addon-package/codisai.zip').extractall('.')"
+
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Import project
+        shell: bash
+        run: godot --headless --path . --import --quit
+
+      - name: Export
+        shell: bash
+        run: |
+          mkdir -p "${{ matrix.bundle }}"
+          godot --headless --path . --export-release "${{ matrix.target }}" "${{ matrix.output }}"
+          # Godot can exit 0 after a failed export, so verify the build output.
+          test -f "${{ matrix.output }}"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bundle }}
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Export Android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Download native addon package
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-native.yml
+          workflow_conclusion: success
+          name: codisai-cross-platform-addon
+          path: addon-package
+          search_artifacts: true
+
+      - name: Install native libraries
+        run: |
+          python -c "import zipfile; zipfile.ZipFile('addon-package/codisai.zip').extractall('.')"
+
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Configure Android SDK and debug keystore
+        run: |
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+            -keystore "$HOME/debug.keystore" -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_HOME}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/debug_keystore = "$HOME/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      - name: Import project
+        run: godot --headless --path . --import --quit
+
+      - name: Export debug APK
+        run: |
+          mkdir -p build/android
+          godot --headless --path . --export-debug "Android" build/android/CodisAI.apk
+          # Godot can exit 0 after a failed export, so verify the APK exists.
+          test -s build/android/CodisAI.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: codisai-android-arm64
+          path: build/android
+          if-no-files-found: error
+          retention-days: 14

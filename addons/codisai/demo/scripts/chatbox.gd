@@ -2,6 +2,7 @@ class_name CodisAIChatbox
 extends Control
 
 const CLIENT = preload("res://addons/codisai/runtime/codisai_client.gd")
+const REMOTE = preload("res://addons/codisai/runtime/remote_client.gd")
 const CATALOG = preload("res://addons/codisai/demo/scripts/model_catalog.gd")
 const CODE = preload("res://addons/codisai/demo/scripts/code_block.gd")
 const PROMPT = preload("res://addons/codisai/demo/scripts/chat_prompt.gd")
@@ -15,6 +16,11 @@ const SETTINGS_ICON = preload("res://addons/codisai/demo/assets/settings.png")
 const MORE_ICON = preload("res://addons/codisai/demo/assets/more.png")
 
 var client: CLIENT
+var _remote: REMOTE
+var _provider: String = "local"
+var _api_base_url: String = "https://api.openai.com/v1"
+var _api_key: String = ""
+var _api_model: String = ""
 var _preferences: ConfigFile = ConfigFile.new()
 var _settings_path: String
 var _models_dir: String
@@ -56,6 +62,16 @@ var _dl_label: Label
 var _dl_bar: ProgressBar
 var _retry_button: Button
 var _last_split_offset: int = 0
+var _startup_hide_deadline_ms: int = 0
+const STREAM_UPDATE_INTERVAL_MS = 100
+const BACKGROUND_POLL_INTERVAL_MS = 200
+var _stream_body: RichTextLabel
+var _pending_stream_text: String = ""
+var _next_stream_update_ms: int = 0
+var _next_background_poll_ms: int = 0
+var _scroll_pending: bool = false
+var _icon_cache: Dictionary = {}
+var _bold_regex: RegEx
 const RECENT = preload("res://addons/codisai/demo/scripts/recent_store.gd")
 var _recent_window: Window
 var _recent_grid: GridContainer
@@ -175,21 +191,60 @@ func _ready() -> void:
 	_preferences.load(_settings_path)
 	_theme_name = String(_preferences.get_value("appearance", "theme", "Dark"))
 	_ui_scale = clampf(float(_preferences.get_value("appearance", "ui_scale", 1.0)), 0.8, 1.35)
+	_provider = String(_preferences.get_value("provider", "mode", "local"))
+	if _provider != "api":
+		_provider = "local"
+	_api_base_url = String(_preferences.get_value("provider", "base_url", "https://api.openai.com/v1"))
+	_api_key = String(_preferences.get_value("provider", "api_key", ""))
+	_api_model = String(_preferences.get_value("provider", "model", ""))
 	client = CLIENT.new()
 	client.token_received.connect(_on_token_received)
 	client.generation_finished.connect(_on_generation_finished)
 	client.generation_failed.connect(_on_generation_failed)
 	client.error_occurred.connect(_set_status)
+	_remote = REMOTE.new()
+	_remote.name = "RemoteProvider"
+	add_child(_remote)
+	_remote.token_received.connect(_on_token_received)
+	_remote.generation_finished.connect(_on_generation_finished)
+	_remote.generation_failed.connect(_on_generation_failed)
+	_remote.error_occurred.connect(_set_status)
+	_remote.configure(_api_base_url, _api_key, _api_model)
 	_build_ui()
+	_apply_provider()
 	_build_networking()
 	_build_library()
 	_apply_appearance()
-	_add_message("assistant", "Hi! I'm **CodisAI**. Load a local model or download one from the model library to start chatting.")
+	_add_message("assistant", "Hi! I'm **CodisAI**. Load a local model, download one from the model library, or add your own API key under Settings to start chatting.")
 	resized.connect(_reflow)
 	_chat_scroll.resized.connect(_reflow)
 	call_deferred("_reflow")
+	_startup_hide_deadline_ms = Time.get_ticks_msec() + 5000
 	if not CLIENT.is_runtime_available():
 		_set_status(CLIENT.get_runtime_error())
+	else:
+		call_deferred("_autoload_largest_model")
+
+func _hide_startup_library() -> void:
+	if _sidebar.visible:
+		_toggle_sidebar()
+
+static func largest_local_model(local_models: Array) -> String:
+	var largest_path: String = ""
+	var largest_size: int = 0
+	for entry: Dictionary in local_models:
+		var size_bytes: int = int(entry.get("size_bytes", 0))
+		if size_bytes > largest_size:
+			largest_size = size_bytes
+			largest_path = String(entry["path"])
+	return largest_path
+
+func _autoload_largest_model() -> void:
+	if _using_remote() or _loading or client.is_model_loaded() or client.is_generating():
+		return
+	var path: String = largest_local_model(CATALOG.scan_local(_models_dir))
+	if not path.is_empty():
+		_load_model_path(path)
 
 func _button(parent: Node, caption: String, callback: Callable) -> Button:
 	var button: Button = Button.new()
@@ -424,7 +479,7 @@ func _hide_scroll_handles(scroll: ScrollContainer) -> void:
 func _build_settings() -> void:
 	_settings_window = Window.new()
 	_settings_window.title = "CodisAI Settings"
-	_settings_window.size = Vector2i(520, 520)
+	_settings_window.size = Vector2i(560, 640)
 	_settings_window.visible = false
 	_settings_window.close_requested.connect(_settings_window.hide)
 	add_child(_settings_window)
@@ -437,9 +492,19 @@ func _build_settings() -> void:
 	settings_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_settings_window.add_child(settings_panel)
 	settings_panel.add_child(margin)
+	var outer: VBoxContainer = VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 12)
+	margin.add_child(outer)
+	var scroll: ScrollContainer = ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer.add_child(scroll)
 	var content: VBoxContainer = VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 12)
-	margin.add_child(content)
+	scroll.add_child(content)
+	_build_provider_settings(content)
 	_label(content, "Generation & appearance")
 	var defaults: Dictionary = {"context_size": 2048, "max_tokens": 256, "temperature": 0.7, "threads": 0}
 	for key: String in defaults:
@@ -476,11 +541,88 @@ func _build_settings() -> void:
 		_apply_appearance()
 		_save_preferences()
 	)
-	var bottom_spacer: Control = Control.new()
-	bottom_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_child(bottom_spacer)
-	_button(content, "Done", _settings_window.hide)
+	var done: Button = _button(outer, "Done", _settings_window.hide)
+	done.size_flags_horizontal = Control.SIZE_SHRINK_END
+
+func _build_provider_settings(parent: Node) -> void:
+	_label(parent, "AI PROVIDER")
+	var mode_picker: OptionButton = OptionButton.new()
+	mode_picker.name = "ProviderMode"
+	mode_picker.add_item("Local GGUF model")
+	mode_picker.add_item("Custom OpenAI-compatible API")
+	mode_picker.select(1 if _provider == "api" else 0)
+	parent.add_child(mode_picker)
+	var url_row: HBoxContainer = HBoxContainer.new()
+	parent.add_child(url_row)
+	_label(url_row, "Base URL").size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var url_input: LineEdit = LineEdit.new()
+	url_input.name = "ProviderBaseUrl"
+	url_input.placeholder_text = "https://api.openai.com/v1"
+	url_input.text = _api_base_url
+	url_input.custom_minimum_size.x = 280
+	url_row.add_child(url_input)
+	var model_row: HBoxContainer = HBoxContainer.new()
+	parent.add_child(model_row)
+	_label(model_row, "Model").size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var model_input: LineEdit = LineEdit.new()
+	model_input.name = "ProviderModel"
+	model_input.placeholder_text = "gpt-4o-mini"
+	model_input.text = _api_model
+	model_input.custom_minimum_size.x = 280
+	model_row.add_child(model_input)
+	var key_row: HBoxContainer = HBoxContainer.new()
+	parent.add_child(key_row)
+	_label(key_row, "API key").size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var key_input: LineEdit = LineEdit.new()
+	key_input.name = "ProviderApiKey"
+	key_input.secret = true
+	key_input.placeholder_text = "Your provider API key"
+	key_input.text = _api_key
+	key_input.custom_minimum_size.x = 280
+	key_row.add_child(key_input)
+	var hint: Label = _label(parent, "Your key is saved in the local settings file and is sent only to this endpoint. Leave the base URL empty to keep using local models.")
+	hint.add_theme_font_size_override("font_size", 11)
+	var custom_rows: Array[Control] = [url_row, model_row, key_row, hint]
+	for row: Control in custom_rows:
+		row.visible = _provider == "api"
+	mode_picker.item_selected.connect(func(index: int) -> void:
+		_provider = "api" if index == 1 else "local"
+		for row: Control in custom_rows:
+			row.visible = _provider == "api"
+		_apply_provider()
+		_save_preferences()
+	)
+	url_input.text_submitted.connect(func(value: String) -> void: _set_provider_values(value, _api_key, _api_model))
+	url_input.focus_exited.connect(func() -> void: _set_provider_values(url_input.text, _api_key, _api_model))
+	model_input.text_submitted.connect(func(value: String) -> void: _set_provider_values(_api_base_url, _api_key, value))
+	model_input.focus_exited.connect(func() -> void: _set_provider_values(_api_base_url, _api_key, model_input.text))
+	key_input.text_submitted.connect(func(value: String) -> void: _set_provider_values(_api_base_url, value, _api_model))
+	key_input.focus_exited.connect(func() -> void: _set_provider_values(_api_base_url, key_input.text, _api_model))
+
+func _set_provider_values(url: String, key: String, model_name: String) -> void:
+	_api_base_url = url.strip_edges()
+	_api_key = key.strip_edges()
+	_api_model = model_name.strip_edges()
+	_apply_provider()
+	_save_preferences()
+
+func _apply_provider() -> void:
+	if _remote != null:
+		_remote.configure(_api_base_url, _api_key, _api_model)
+	_refresh_model_label()
+
+func _using_remote() -> bool:
+	return _provider == "api"
+
+func _refresh_model_label() -> void:
+	if _model_label == null:
+		return
+	if _using_remote():
+		_model_label.text = ("Custom API: " + _api_model) if not _api_model.is_empty() else "Custom API provider"
+	elif client != null and client.is_model_loaded():
+		_model_label.text = String(_current_entry.get("name", client.get_model_path().get_file()))
+	else:
+		_model_label.text = "No model loaded"
 
 func _generation_options() -> Dictionary:
 	var options: Dictionary = {}
@@ -493,6 +635,10 @@ func _save_preferences() -> void:
 	_preferences.set_value("appearance", "theme", _theme_name)
 	_preferences.set_value("appearance", "ui_scale", _ui_scale)
 	_preferences.set_value("layout", "split_offset", _last_split_offset)
+	_preferences.set_value("provider", "mode", _provider)
+	_preferences.set_value("provider", "base_url", _api_base_url)
+	_preferences.set_value("provider", "api_key", _api_key)
+	_preferences.set_value("provider", "model", _api_model)
 	for key: String in _generation_inputs:
 		_preferences.set_value("generation", key, _generation_options()[key])
 	var error: Error = _preferences.save(_settings_path)
@@ -608,10 +754,10 @@ func _load_model_path(path: String) -> void:
 		client.unload_model()
 	_current_entry = CATALOG.find_by_filename(path.get_file())
 	if client.load_model(path, _generation_options()):
-		_model_label.text = String(_current_entry.get("name", path.get_file()))
+		_refresh_model_label()
 		_set_status("Ready")
 	else:
-		_model_label.text = "No model loaded"
+		_refresh_model_label()
 		_set_status(client.get_last_error())
 	_loading = false
 
@@ -628,7 +774,7 @@ func _remove_downloaded_model(path: String) -> void:
 			client.unload_model()
 			_current_entry.clear()
 			_history.clear()
-			_model_label.text = "No model loaded"
+			_refresh_model_label()
 		var error: Error = DirAccess.remove_absolute(path)
 		_set_status("Model removed" if error == OK else "Removal failed: " + error_string(error))
 		_build_library()
@@ -642,6 +788,9 @@ func _copy_response(message: Dictionary) -> void:
 	_set_status("Response copied to clipboard")
 
 func _tinted_icon(source: Texture2D, color: Color, small: bool = false) -> Texture2D:
+	var key: String = "%d:%s:%s" % [source.get_instance_id(), color.to_html(), small]
+	if _icon_cache.has(key):
+		return _icon_cache[key] as Texture2D
 	var image: Image = source.get_image()
 	if small:
 		image.resize(24, 24, Image.INTERPOLATE_LANCZOS)
@@ -649,7 +798,9 @@ func _tinted_icon(source: Texture2D, color: Color, small: bool = false) -> Textu
 		for x: int in range(image.get_width()):
 			var pixel: Color = image.get_pixel(x, y)
 			image.set_pixel(x, y, Color(color.r, color.g, color.b, pixel.a))
-	return ImageTexture.create_from_image(image)
+	var texture: Texture2D = ImageTexture.create_from_image(image)
+	_icon_cache[key] = texture
+	return texture
 
 func _add_message(role: String, text: String) -> Dictionary:
 	var row: HBoxContainer = HBoxContainer.new()
@@ -730,9 +881,10 @@ func _render_message(message: Dictionary) -> void:
 
 func _markdown(text: String) -> String:
 	var escaped: String = text.replace("[", "[lb]")
-	var bold: RegEx = RegEx.new()
-	bold.compile("\\*\\*(.+?)\\*\\*")
-	return bold.sub(escaped, "[b]$1[/b]", true)
+	if _bold_regex == null:
+		_bold_regex = RegEx.new()
+		_bold_regex.compile("\\*\\*(.+?)\\*\\*")
+	return _bold_regex.sub(escaped, "[b]$1[/b]", true)
 
 func _reflow() -> void:
 	if _chat_scroll == null:
@@ -748,7 +900,11 @@ func _reflow() -> void:
 			bubble.custom_minimum_size.x = clampf(40.0 + longest * 8.0, 140.0, maxf(140.0, _chat_list.size.x - 40.0))
 
 func _scroll_bottom() -> void:
+	if _scroll_pending:
+		return
+	_scroll_pending = true
 	await get_tree().process_frame
+	_scroll_pending = false
 	if is_instance_valid(_chat_scroll):
 		_chat_scroll.scroll_vertical = int(_chat_scroll.get_v_scroll_bar().max_value)
 
@@ -758,14 +914,19 @@ func _on_prompt_input(event: InputEvent) -> void:
 		_prompt_input.accept_event()
 
 func _send_prompt() -> void:
-	if client.is_generating():
+	if client.is_generating() or _remote.is_generating():
 		client.cancel_generation()
+		_remote.cancel_generation()
 		return
 	var text: String = _prompt_input.text.strip_edges()
 	if text.is_empty():
 		return
-	if not client.is_model_loaded():
-		_set_status("Load a model first.")
+	if _using_remote():
+		if not _remote.is_configured():
+			_set_status("Add a base URL and model name for the custom provider in Settings.")
+			return
+	elif not client.is_model_loaded():
+		_set_status("Load a model first, or configure a custom provider in Settings.")
 		return
 	_add_message("user", text)
 	for attachment: Dictionary in _attached_documents:
@@ -778,35 +939,73 @@ func _send_prompt() -> void:
 	_start_generation()
 
 func _start_generation() -> void:
+	_stream_body = null
+	_pending_stream_text = ""
+	_next_stream_update_ms = 0
 	_current_text = ""
 	_active_response = _add_message("assistant", "")
 	_send_button.tooltip_text = "Stop generation"
 	_set_status("Generating…")
+	if _using_remote():
+		_remote.configure(_api_base_url, _api_key, _api_model)
+		var messages: Array = [{"role": "system", "content": CATALOG.SYSTEM_PROMPT}]
+		for entry: Dictionary in _history:
+			messages.append({"role": String(entry["role"]), "content": String(entry["content"])})
+		if not _remote.send_chat(messages, _generation_options()):
+			_on_generation_failed(_remote.get_last_error())
+		return
 	var prompt: String = PROMPT.build(_history, String(_current_entry.get("template", "chatml")))
 	if not client.generate_async(prompt, _generation_options()):
 		_on_generation_failed(client.get_last_error())
 
 func _on_token_received(token: String) -> void:
+	if _active_response.is_empty():
+		return
 	_current_text += token
-	if not _active_response.is_empty():
-		_active_response["text"] = _current_text
-		_render_message(_active_response)
-		_reflow()
-		_scroll_bottom()
+	_pending_stream_text += token
+	_active_response["text"] = _current_text
+
+func _flush_stream_text() -> void:
+	if _pending_stream_text.is_empty() or _active_response.is_empty():
+		return
+	if not is_instance_valid(_stream_body):
+		_stream_body = RichTextLabel.new()
+		_stream_body.selection_enabled = true
+		_stream_body.fit_content = true
+		_stream_body.scroll_active = false
+		_stream_body.mouse_filter = Control.MOUSE_FILTER_STOP
+		_stream_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var content: VBoxContainer = _active_response["content"]
+		content.add_child(_stream_body)
+		var touch_copy: TOUCH_COPY = TOUCH_COPY.new()
+		_stream_body.add_child(touch_copy)
+		touch_copy.setup(_stream_body, _copy_response.bind(_active_response))
+	# Plain incremental text while streaming; format markdown/code once at completion.
+	_stream_body.add_text(_pending_stream_text)
+	_pending_stream_text = ""
+	_scroll_bottom()
 
 func _on_generation_finished(text: String, cancelled: bool) -> void:
 	var final_text: String = text if not text.is_empty() else _current_text
 	if not _active_response.is_empty():
 		_active_response["text"] = final_text
 		_render_message(_active_response)
+	_pending_stream_text = ""
+	_stream_body = null
 	_history.append({"role": "assistant", "content": final_text})
 	_active_response = {}
+	_scroll_bottom()
 	_send_button.tooltip_text = "Send message"
 	_set_status("Stopped" if cancelled else "Ready")
 	_save_recent()
 	_reflow()
 
 func _on_generation_failed(message: String) -> void:
+	_flush_stream_text()
+	if not _active_response.is_empty():
+		_render_message(_active_response)
+	_pending_stream_text = ""
+	_stream_body = null
 	_send_button.tooltip_text = "Send message"
 	_active_response = {}
 	_set_status(message)
@@ -911,6 +1110,16 @@ func _update_keyboard_layout() -> void:
 		_split.offset_bottom = -inset
 
 func _process(_delta: float) -> void:
+	var now_ms: int = Time.get_ticks_msec()
+	if _startup_hide_deadline_ms > 0 and now_ms >= _startup_hide_deadline_ms:
+		_startup_hide_deadline_ms = 0
+		_hide_startup_library()
+	if not _pending_stream_text.is_empty() and now_ms >= _next_stream_update_ms:
+		_next_stream_update_ms = now_ms + STREAM_UPDATE_INTERVAL_MS
+		_flush_stream_text()
+	if now_ms < _next_background_poll_ms:
+		return
+	_next_background_poll_ms = now_ms + BACKGROUND_POLL_INTERVAL_MS
 	_update_keyboard_layout()
 	if _downloading and _dl_bar.visible:
 		var total: int = _download_request.get_body_size()
@@ -946,3 +1155,5 @@ func _retry_download() -> void:
 func _exit_tree() -> void:
 	if client != null:
 		client.cancel_generation()
+	if _remote != null:
+		_remote.cancel_generation()

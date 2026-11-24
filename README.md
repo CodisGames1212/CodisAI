@@ -16,6 +16,7 @@ CodisAI is for developers exploring private, offline-capable AI features in game
 - **Model discovery and downloads:** Browse curated Hugging Face GGUF models, review their specifications, download a selected file, and load it in the demo.
 - **Local conversation library:** Save conversations as individual JSON files; reopen or remove saved chats from the Recent window.
 - **Customizable interface:** Configure generation settings, UI scale, and Dark, AMOLED, or Light appearance. Attach supported text files to prompts.
+- **Custom AI provider:** Switch Settings to any OpenAI-compatible chat completions endpoint and use your own API key when you prefer a hosted model over local inference.
 
 Models are not bundled. Add your own `.gguf` files or download one from the demo's model library. The demo stores models, settings, and recent chats in the OS Documents directory under `CodisGames/CodisAI` (`models/`, `settings.cfg`, and `recent/`). It attempts to migrate the older `CodisGames/Codisai` folder when safe. Documents access varies by operating system; Android shared-storage behavior depends on the device and OS version. Always review model and backend licenses before redistribution.
 
@@ -52,6 +53,8 @@ The extension manifest is [addons/codisai/native/codisai.gdextension](addons/cod
 
 The workflow at [.github/workflows/build-native.yml](.github/workflows/build-native.yml) builds the mapped targets in Debug and Release and packages the addon as a downloadable artifact. It can be started from **Actions → Build CodisAI GDExtension → Run workflow**; configured push and pull-request path filters also trigger it. The separate [.github/workflows/build-macos.yml](.github/workflows/build-macos.yml) workflow builds macOS x86_64 and arm64 in both configurations and packages a macOS addon artifact.
 
+The [.github/workflows/build-game.yml](.github/workflows/build-game.yml) workflow exports the chat demo itself for Windows x86_64, Linux arm64 and Android arm64, uploading each build as an artifact. It reuses the `codisai-cross-platform-addon` artifact from a successful native build, so run **Build CodisAI GDExtension** first; it can be started from **Actions → Build CodisAI App → Run workflow** and also runs on `v*` tags.
+
 ### Android and WSL/Linux
 
 The CMake configuration disables OpenMP for Android to avoid a separate `libomp.so` dependency. The CI workflow shows the NDK, Android ABI and static C++ runtime options. The helper [`build_wsl.sh`](addons/codisai/native/build_wsl.sh) can build Linux x86_64 Release and Android Debug/Release libraries for arm64-v8a, armeabi-v7a, x86_64, and x86 from Ubuntu WSL/Linux. It expects a Linux-hosted NDK at `$HOME/Android/android-ndk-r28c` by default, or the location in `ANDROID_NDK_ROOT`; its default Android minimum API is 26.
@@ -78,6 +81,16 @@ CPU inference is the default baseline. GPU offload is not enabled by this CMake 
 - **Recent conversations:** The Recent popup lists each saved chat's prompt, model, and modified date. Select a prompt to restore its transcript, or remove its JSON record.
 - **Settings and appearance:** Change context size, output token limit, temperature, CPU thread count, UI scale, and Dark, AMOLED, or Light theme. Preferences persist locally.
 
+### Custom AI provider
+
+Settings offers two providers: **Local GGUF model** (the default) and **Custom OpenAI-compatible API**. Choosing the API provider reveals three fields:
+
+- **Base URL:** for example `https://api.openai.com/v1`, or the full `.../chat/completions` URL of a self-hosted server. Any OpenAI-compatible service works.
+- **Model:** the model name that endpoint expects, such as `gpt-4o-mini`.
+- **API key:** your own key, sent as an `Authorization: Bearer` header to that endpoint only.
+
+The provider, base URL, model and key are saved in the same local `settings.cfg` used for the other preferences, so the key is stored in plain text on this device. Clear the base URL to return to local models. With the API provider selected, the chat demo sends the conversation as OpenAI-style chat messages and does not need a local GGUF model loaded; replies arrive as a single message rather than token-by-token streaming.
+
 ### Local data locations
 
 Models, settings, and recent chats are stored under the operating system's Documents directory:
@@ -85,7 +98,7 @@ Models, settings, and recent chats are stored under the operating system's Docum
 | Data | Path below Documents |
 | --- | --- |
 | Downloaded models | `CodisGames/CodisAI/models/` |
-| Settings | `CodisGames/CodisAI/settings.cfg` |
+| Settings (including any custom provider key) | `CodisGames/CodisAI/settings.cfg` |
 | Recent conversations | `CodisGames/CodisAI/recent/*.json` |
 
 The demo creates required directories and attempts to migrate the older `CodisGames/Codisai` folder when safe. Documents-folder access can differ between platforms; Android shared-storage access depends on Android version and device policy.
@@ -182,6 +195,12 @@ tests/              GDScript tests for rendering, model storage, runtime, prompt
 - Model and context memory requirements can be substantial. Choose settings appropriate to the target device and only load model files from sources you trust.
 - GGUF support does not guarantee every architecture, multimodal model, or chat template is supported by the pinned llama.cpp version. Model catalog entries are curated and upstream availability or descriptions can change.
 - Review third-party model licenses and terms before use or redistribution. CodisAI does not bundle model weights.
+
+## Performance on slower devices
+
+The demo caps rendering at 30 FPS, batches streaming text updates at 100 ms intervals, polls mobile keyboard/download progress every 200 ms, and caches tinted icons and markdown parsing resources. Streaming uses a persistent selectable plain-text label; markdown and highlighted code blocks are formatted once at completion or cancellation. This avoids rebuilding UI controls for each generated token.
+
+Largest-installed-model autoload remains enabled as requested. For slower or memory-constrained devices, manually selecting a smaller quantized model and reducing context/output limits will usually have a larger impact than UI optimizations. Model loading is still synchronous and native inference speed remains hardware/model dependent. No device-specific speedup is claimed without benchmarks.
 
 ## Testing
 
