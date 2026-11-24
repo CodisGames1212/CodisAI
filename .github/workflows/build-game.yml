@@ -196,11 +196,21 @@ jobs:
       - name: Install Android build template
         run: |
           # The Android preset uses Gradle, so the project needs the build
-          # template the editor installs from the Project menu. Without --quit
-          # the installer leaves the editor running, and it can abort while
-          # shutting down, so ignore its exit status and check the files it
-          # writes (the Gradle project plus the version marker).
-          godot --headless --path . --install-android-build-template --quit || true
+          # template the editor installs from the Project menu.
+          # --install-android-build-template does nothing in headless mode, so
+          # unpack the template from the export templates and write the version
+          # marker Godot checks before exporting from a Gradle build.
+          templates="$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable"
+          rm -rf android
+          mkdir -p android/build
+          unzip -q "$templates/android_source.zip" -d android/build
+          if [ ! -f android/build/build.gradle ]; then
+            inner=$(find android/build -mindepth 1 -maxdepth 1 -type d | head -n 1)
+            mv "$inner"/* android/build/
+            rmdir "$inner"
+          fi
+          cp "$templates/version.txt" android/.build_version
+          cat android/.build_version
           test -f android/build/build.gradle
           test -f android/.build_version
           chmod +x android/build/gradlew
