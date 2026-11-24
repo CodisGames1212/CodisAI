@@ -166,9 +166,22 @@ jobs:
         if: matrix.platform == 'android'
         shell: bash
         run: |
-          ndk="$ANDROID_HOME/ndk/28.2.13676358"
-          test -f "$ndk/build/cmake/android.toolchain.cmake"
+          # The runner image rotates NDK versions, so use the newest NDK that
+          # actually ships the CMake toolchain instead of pinning a version.
+          ndk=""
+          for candidate in "$ANDROID_HOME"/ndk/*; do
+            if [ -f "$candidate/build/cmake/android.toolchain.cmake" ]; then
+              ndk="$candidate"
+            fi
+          done
+          if [ -z "$ndk" ]; then
+            echo "No NDK with build/cmake/android.toolchain.cmake under $ANDROID_HOME/ndk" >&2
+            ls -1 "$ANDROID_HOME/ndk" >&2 || true
+            exit 1
+          fi
+          echo "Using NDK: $ndk"
           echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
 
       - name: Configure Android build
         if: matrix.platform == 'android'
@@ -202,6 +215,10 @@ jobs:
   package:
     name: Assemble plugin package
     needs: build
+    # A platform job can be cancelled before it starts (macOS runners are not
+    # always available), so package whatever was built and verify the desktop
+    # and Android libraries below instead of requiring every matrix entry.
+    if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -228,6 +245,23 @@ jobs:
             cp "$library" "$staging/bin/$platform/"
           done < <(find artifacts -type f \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) -print0)
           cp README.md LICENSE "$staging/"
+
+      - name: Verify the package covers the app targets
+        shell: bash
+        run: |
+          for platform in windows linux android; do
+            count=$(find "package/addons/codisai/bin/$platform" -type f \
+              \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "No native libraries for $platform" >&2
+              exit 1
+            fi
+            echo "$platform: $count libraries"
+          done
+          macos=$(find package/addons/codisai/bin/macos -type f -name '*.dylib' 2>/dev/null | wc -l)
+          if [ "$macos" -eq 0 ]; then
+            echo "::warning::The package has no macOS library; the macOS jobs did not run."
+          fi
           cd package
           zip -qr codisai.zip addons
 
