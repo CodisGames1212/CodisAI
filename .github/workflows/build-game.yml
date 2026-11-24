@@ -7,6 +7,10 @@ name: Build CodisAI App
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - "feature/**"
+      - "release/**"
     tags:
       - "v*"
     paths:

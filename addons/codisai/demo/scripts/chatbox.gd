@@ -15,9 +15,26 @@ const RECENT_ICON = preload("res://addons/codisai/demo/assets/recent.png")
 const SETTINGS_ICON = preload("res://addons/codisai/demo/assets/settings.png")
 const MORE_ICON = preload("res://addons/codisai/demo/assets/more.png")
 
+# OpenAI-compatible endpoints offered in Settings; "custom" keeps whatever the
+# user typed, and "local" runs GGUF inference in-process.
+const PROVIDERS := [
+	{"id": "local", "name": "Local GGUF model", "base_url": "", "model": ""},
+	{"id": "openai", "name": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+	{"id": "openrouter", "name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": "openai/gpt-4o-mini"},
+	{"id": "groq", "name": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile"},
+	{"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
+	{"id": "together", "name": "Together AI", "base_url": "https://api.together.xyz/v1", "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+	{"id": "mistral", "name": "Mistral", "base_url": "https://api.mistral.ai/v1", "model": "mistral-small-latest"},
+	{"id": "lmstudio", "name": "LM Studio (local server)", "base_url": "http://localhost:1234/v1", "model": "local-model"},
+	{"id": "ollama", "name": "Ollama (local server)", "base_url": "http://localhost:11434/v1", "model": "llama3.2"},
+	{"id": "custom", "name": "Custom OpenAI-compatible API", "base_url": "", "model": ""},
+]
+
 var client: CLIENT
 var _remote: REMOTE
 var _provider: String = "local"
+var _provider_preset_id: String = "local"
+var _provider_picker: OptionButton
 var _api_base_url: String = "https://api.openai.com/v1"
 var _api_key: String = ""
 var _api_model: String = ""
@@ -197,6 +214,11 @@ func _ready() -> void:
 	_api_base_url = String(_preferences.get_value("provider", "base_url", "https://api.openai.com/v1"))
 	_api_key = String(_preferences.get_value("provider", "api_key", ""))
 	_api_model = String(_preferences.get_value("provider", "model", ""))
+	_provider_preset_id = String(_preferences.get_value("provider", "preset", ""))
+	if _provider == "local":
+		_provider_preset_id = "local"
+	elif _provider_preset_id.is_empty() or _provider_preset_id == "local":
+		_provider_preset_id = provider_for_base_url(_api_base_url)
 	client = CLIENT.new()
 	client.token_received.connect(_on_token_received)
 	client.generation_finished.connect(_on_generation_finished)
@@ -544,14 +566,39 @@ func _build_settings() -> void:
 	var done: Button = _button(outer, "Done", _settings_window.hide)
 	done.size_flags_horizontal = Control.SIZE_SHRINK_END
 
+static func provider_index(provider_id: String) -> int:
+	for index: int in PROVIDERS.size():
+		if String(PROVIDERS[index]["id"]) == provider_id:
+			return index
+	return PROVIDERS.size() - 1
+
+static func provider_entry(provider_id: String) -> Dictionary:
+	return PROVIDERS[provider_index(provider_id)]
+
+static func provider_for_base_url(url: String) -> String:
+	var normalized: String = url.strip_edges().trim_suffix("/")
+	if normalized.is_empty():
+		return "custom"
+	for entry: Dictionary in PROVIDERS:
+		var preset_url: String = String(entry["base_url"]).trim_suffix("/")
+		if not preset_url.is_empty() and preset_url == normalized:
+			return String(entry["id"])
+	return "custom"
+
+func _select_provider_preset(provider_id: String) -> void:
+	_provider_preset_id = provider_id
+	if _provider_picker != null:
+		_provider_picker.select(provider_index(provider_id))
+
 func _build_provider_settings(parent: Node) -> void:
 	_label(parent, "AI PROVIDER")
-	var mode_picker: OptionButton = OptionButton.new()
-	mode_picker.name = "ProviderMode"
-	mode_picker.add_item("Local GGUF model")
-	mode_picker.add_item("Custom OpenAI-compatible API")
-	mode_picker.select(1 if _provider == "api" else 0)
-	parent.add_child(mode_picker)
+	var provider_picker: OptionButton = OptionButton.new()
+	provider_picker.name = "ProviderMode"
+	for entry: Dictionary in PROVIDERS:
+		provider_picker.add_item(String(entry["name"]))
+	provider_picker.select(provider_index(_provider_preset_id))
+	_provider_picker = provider_picker
+	parent.add_child(provider_picker)
 	var url_row: HBoxContainer = HBoxContainer.new()
 	parent.add_child(url_row)
 	_label(url_row, "Base URL").size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -585,8 +632,18 @@ func _build_provider_settings(parent: Node) -> void:
 	var custom_rows: Array[Control] = [url_row, model_row, key_row, hint]
 	for row: Control in custom_rows:
 		row.visible = _provider == "api"
-	mode_picker.item_selected.connect(func(index: int) -> void:
-		_provider = "api" if index == 1 else "local"
+	provider_picker.item_selected.connect(func(index: int) -> void:
+		var preset: Dictionary = PROVIDERS[index]
+		_select_provider_preset(String(preset["id"]))
+		_provider = "local" if _provider_preset_id == "local" else "api"
+		var preset_url: String = String(preset["base_url"])
+		var preset_model: String = String(preset["model"])
+		if not preset_url.is_empty():
+			_api_base_url = preset_url
+			url_input.text = preset_url
+		if not preset_model.is_empty():
+			_api_model = preset_model
+			model_input.text = preset_model
 		for row: Control in custom_rows:
 			row.visible = _provider == "api"
 		_apply_provider()
@@ -603,6 +660,8 @@ func _set_provider_values(url: String, key: String, model_name: String) -> void:
 	_api_base_url = url.strip_edges()
 	_api_key = key.strip_edges()
 	_api_model = model_name.strip_edges()
+	if _provider == "api" and not _api_base_url.is_empty():
+		_select_provider_preset(provider_for_base_url(_api_base_url))
 	_apply_provider()
 	_save_preferences()
 
@@ -618,7 +677,8 @@ func _refresh_model_label() -> void:
 	if _model_label == null:
 		return
 	if _using_remote():
-		_model_label.text = ("Custom API: " + _api_model) if not _api_model.is_empty() else "Custom API provider"
+		var provider_name: String = String(provider_entry(_provider_preset_id)["name"])
+		_model_label.text = (provider_name + ": " + _api_model) if not _api_model.is_empty() else provider_name
 	elif client != null and client.is_model_loaded():
 		_model_label.text = String(_current_entry.get("name", client.get_model_path().get_file()))
 	else:
@@ -636,6 +696,7 @@ func _save_preferences() -> void:
 	_preferences.set_value("appearance", "ui_scale", _ui_scale)
 	_preferences.set_value("layout", "split_offset", _last_split_offset)
 	_preferences.set_value("provider", "mode", _provider)
+	_preferences.set_value("provider", "preset", _provider_preset_id)
 	_preferences.set_value("provider", "base_url", _api_base_url)
 	_preferences.set_value("provider", "api_key", _api_key)
 	_preferences.set_value("provider", "model", _api_model)

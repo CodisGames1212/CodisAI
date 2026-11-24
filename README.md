@@ -16,7 +16,7 @@ CodisAI is for developers exploring private, offline-capable AI features in game
 - **Model discovery and downloads:** Browse curated Hugging Face GGUF models, review their specifications, download a selected file, and load it in the demo.
 - **Local conversation library:** Save conversations as individual JSON files; reopen or remove saved chats from the Recent window.
 - **Customizable interface:** Configure generation settings, UI scale, and Dark, AMOLED, or Light appearance. Attach supported text files to prompts.
-- **Custom AI provider:** Switch Settings to any OpenAI-compatible chat completions endpoint and use your own API key when you prefer a hosted model over local inference.
+- **Custom AI provider:** Pick a provider from the Settings dropdown — OpenAI, OpenRouter, Groq, DeepSeek, Together AI, Mistral, or a local LM Studio/Ollama server — or enter any other OpenAI-compatible endpoint and use your own API key.
 
 Models are not bundled. Add your own `.gguf` files or download one from the demo's model library. The demo stores models, settings, and recent chats in the OS Documents directory under `CodisGames/CodisAI` (`models/`, `settings.cfg`, and `recent/`). It attempts to migrate the older `CodisGames/Codisai` folder when safe. Documents access varies by operating system; Android shared-storage behavior depends on the device and OS version. Always review model and backend licenses before redistribution.
 
@@ -53,7 +53,7 @@ The extension manifest is [addons/codisai/native/codisai.gdextension](addons/cod
 
 The workflow at [.github/workflows/build-native.yml](.github/workflows/build-native.yml) builds the mapped targets in Debug and Release and packages the addon as a downloadable artifact. It can be started from **Actions → Build CodisAI GDExtension → Run workflow**; configured push and pull-request path filters also trigger it. The separate [.github/workflows/build-macos.yml](.github/workflows/build-macos.yml) workflow builds macOS x86_64 and arm64 in both configurations and packages a macOS addon artifact.
 
-The [.github/workflows/build-game.yml](.github/workflows/build-game.yml) workflow exports the chat demo itself for Windows x86_64, Linux arm64 and Android arm64, uploading each build as an artifact. It reuses the `codisai-cross-platform-addon` artifact from a successful native build, so run **Build CodisAI GDExtension** first; it can be started from **Actions → Build CodisAI App → Run workflow** and also runs on `v*` tags.
+The [.github/workflows/build-game.yml](.github/workflows/build-game.yml) workflow exports the chat demo itself for Windows x86_64, Linux arm64 and Android arm64, uploading each build as an artifact. It reuses the `codisai-cross-platform-addon` artifact from a successful native build, so run **Build CodisAI GDExtension** first; it can be started from **Actions → Build CodisAI App → Run workflow** and also runs on `v*` tags and on pushes to `main` or `feature/**` branches that change the app or its export configuration.
 
 ### Android and WSL/Linux
 
@@ -83,13 +83,20 @@ CPU inference is the default baseline. GPU offload is not enabled by this CMake 
 
 ### Custom AI provider
 
-Settings offers two providers: **Local GGUF model** (the default) and **Custom OpenAI-compatible API**. Choosing the API provider reveals three fields:
+Settings' **AI provider** dropdown lists local inference and ready-made OpenAI-compatible services. Selecting a service fills in its base URL and a default model, so only the key is left to paste:
 
-- **Base URL:** for example `https://api.openai.com/v1`, or the full `.../chat/completions` URL of a self-hosted server. Any OpenAI-compatible service works.
-- **Model:** the model name that endpoint expects, such as `gpt-4o-mini`.
+- **Local GGUF model:** the default; inference runs in-process and no key is needed.
+- **OpenAI, OpenRouter, Groq, DeepSeek, Together AI, Mistral:** hosted services that use your own key.
+- **LM Studio and Ollama:** local OpenAI-compatible servers at `http://localhost:1234/v1` and `http://localhost:11434/v1`.
+- **Custom OpenAI-compatible API:** any other endpoint, including self-hosted servers and full `.../chat/completions` URLs.
+
+Choosing anything other than local inference reveals three editable fields:
+
+- **Base URL:** prefilled from the selected service. Editing it switches the dropdown to **Custom**.
+- **Model:** prefilled with the service's default model; any model name that endpoint accepts works.
 - **API key:** your own key, sent as an `Authorization: Bearer` header to that endpoint only.
 
-The provider, base URL, model and key are saved in the same local `settings.cfg` used for the other preferences, so the key is stored in plain text on this device. Clear the base URL to return to local models. With the API provider selected, the chat demo sends the conversation as OpenAI-style chat messages and does not need a local GGUF model loaded; replies arrive as a single message rather than token-by-token streaming.
+The selected provider, base URL, model and key are saved in the same local `settings.cfg` used for the other preferences, so the key is stored in plain text on this device. Clearing the base URL stops the remote provider from being configured. With the API provider selected, the chat demo sends the conversation as OpenAI-style chat messages and does not need a local GGUF model loaded; replies arrive as a single message rather than token-by-token streaming.
 
 ### Local data locations
 
