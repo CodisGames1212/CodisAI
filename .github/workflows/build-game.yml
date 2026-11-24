@@ -193,6 +193,13 @@ jobs:
           echo "import exit status: $status"
           test -d .godot/imported
 
+      - name: Install Android build template
+        run: |
+          # The Android preset uses Gradle, so the project needs the build
+          # template that the editor normally installs from the Project menu.
+          godot --headless --path . --install-android-build-template
+          test -d android/build
+
       - name: Export debug APK
         run: |
           mkdir -p build/android
