@@ -196,9 +196,23 @@ jobs:
       - name: Install Android build template
         run: |
           # The Android preset uses Gradle, so the project needs the build
-          # template that the editor normally installs from the Project menu.
-          godot --headless --path . --install-android-build-template
-          test -d android/build
+          # template the editor installs from the Project menu. The
+          # --install-android-build-template flag hangs headless, so unpack the
+          # templated Gradle project from the export templates instead.
+          templates="$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable"
+          rm -rf android
+          mkdir -p android/build
+          unzip -q "$templates/android_source.zip" -d android/build
+          if [ ! -f android/build/build.gradle ]; then
+            inner=$(find android/build -mindepth 1 -maxdepth 1 -type d | head -n 1)
+            if [ -n "$inner" ] && [ -f "$inner/build.gradle" ]; then
+              mv "$inner"/* android/build/
+              rmdir "$inner"
+            fi
+          fi
+          test -f android/build/build.gradle
+          test -f android/build/gradlew
+          chmod +x android/build/gradlew
 
       - name: Export debug APK
         run: |
