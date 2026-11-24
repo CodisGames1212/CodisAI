@@ -2,15 +2,18 @@ name: Build CodisAI App
 
 # Exports the chat demo for Windows, Linux (arm64) and Android using the
 # platform libraries produced by the "Build CodisAI GDExtension" workflow.
-# Run that workflow at least once so the cross-platform addon artifact exists.
+# That workflow's addon artifact is kept for 14 days, so this workflow runs
+# right after a successful native build and downloads that run's artifact; a
+# manual run falls back to the newest successful native build that still has it.
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Build CodisAI GDExtension
+    types:
+      - completed
   push:
-    branches:
-      - main
-      - "feature/**"
-      - "release/**"
     tags:
       - "v*"
     paths:
@@ -33,6 +36,7 @@ env:
 jobs:
   export:
     name: Export ${{ matrix.target }}
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -57,7 +61,16 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Download native addon package
+      - name: Download native addon package from the triggering build
+        if: github.event_name == 'workflow_run'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: codisai-cross-platform-addon
+          path: addon-package
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: Download native addon package from the latest native build
+        if: github.event_name != 'workflow_run'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: build-native.yml
@@ -69,6 +82,7 @@ jobs:
       - name: Install native libraries
         shell: bash
         run: |
+          test -f addon-package/codisai.zip
           python -c "import zipfile; zipfile.ZipFile('addon-package/codisai.zip').extractall('.')"
 
       - name: Set up Godot
@@ -100,6 +114,7 @@ jobs:
 
   android:
     name: Export Android
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -110,7 +125,16 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Download native addon package
+      - name: Download native addon package from the triggering build
+        if: github.event_name == 'workflow_run'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: codisai-cross-platform-addon
+          path: addon-package
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: Download native addon package from the latest native build
+        if: github.event_name != 'workflow_run'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: build-native.yml
@@ -121,6 +145,7 @@ jobs:
 
       - name: Install native libraries
         run: |
+          test -f addon-package/codisai.zip
           python -c "import zipfile; zipfile.ZipFile('addon-package/codisai.zip').extractall('.')"
 
       - name: Set up Godot
